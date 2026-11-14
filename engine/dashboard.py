@@ -375,9 +375,9 @@ def sidebar() -> tuple[str, bool, str]:
 
         col1, col2 = st.columns(2)
         with col1:
-            refresh = st.button("🔄 Aggiorna", use_container_width=True, type="primary")
+            refresh = st.button("🔄 Aggiorna", width="stretch", type="primary")
         with col2:
-            clear = st.button("🗑 Pulisci cache", use_container_width=True)
+            clear = st.button("🗑 Pulisci cache", width="stretch")
 
         if refresh or clear:
             st.cache_data.clear()
@@ -427,13 +427,13 @@ def render_portfolio_section(label: str, pnl_df: pd.DataFrame, symbol: str):
 
     filtered = pnl_df[
         pnl_df["settore"].isin(sel_sec) &
-        (~solo_gain | (pnl_df["pnl"] > 0))
+        ((pnl_df["pnl"] > 0) if solo_gain else True)
     ]
 
     display_df = build_pnl_table(filtered, symbol)
     st.dataframe(
         style_pnl_table(display_df, symbol),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=min(40 + len(filtered) * 35, 520),
     )
@@ -442,11 +442,11 @@ def render_portfolio_section(label: str, pnl_df: pd.DataFrame, symbol: str):
     st.markdown('<div class="section-title">Analisi</div>', unsafe_allow_html=True)
     c1, c2 = st.columns([1, 1])
     with c1:
-        st.plotly_chart(chart_sector_pie(pnl_df, label, symbol), use_container_width=True)
+        st.plotly_chart(chart_sector_pie(pnl_df, label, symbol), width="stretch")
     with c2:
-        st.plotly_chart(chart_sector_pnl(pnl_df, label, symbol), use_container_width=True)
+        st.plotly_chart(chart_sector_pnl(pnl_df, label, symbol), width="stretch")
 
-    st.plotly_chart(chart_pnl_bar(pnl_df, label, symbol), use_container_width=True)
+    st.plotly_chart(chart_pnl_bar(pnl_df, label, symbol), width="stretch")
 
 
 def render_comparison(all_data: dict[str, pd.DataFrame], symbol: str):
@@ -465,9 +465,9 @@ def render_comparison(all_data: dict[str, pd.DataFrame], symbol: str):
 
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(chart_comparison(all_data, symbol), use_container_width=True)
+        st.plotly_chart(chart_comparison(all_data, symbol), width="stretch")
     with c2:
-        st.plotly_chart(chart_comparison_pnl(all_data, symbol), use_container_width=True)
+        st.plotly_chart(chart_comparison_pnl(all_data, symbol), width="stretch")
 
     # Tabella riassuntiva
     st.markdown('<div class="section-title">Riepilogo</div>', unsafe_allow_html=True)
@@ -508,7 +508,7 @@ def render_comparison(all_data: dict[str, pd.DataFrame], symbol: str):
             })
         )
 
-    st.dataframe(style_summary(summary_df), use_container_width=True, hide_index=True)
+    st.dataframe(style_summary(summary_df), width="stretch", hide_index=True)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

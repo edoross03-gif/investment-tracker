@@ -13,7 +13,7 @@ import {
 import { Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
-  parseRevolut, parseCryptoCom, readFileRows,
+  parseRevolut, parseCryptoCom, readStatements, loadUsdEurRates,
   type ParsedPosition, type ParsedRealized, type Source,
 } from "@/lib/parsers";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,8 @@ function makeKey() {
 function UploadPage() {
   const navigate = useNavigate();
   const [source, setSource] = useState<Source>("revolut");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [notes, setNotes] = useState<string[]>([]);
   const [rows, setRows] = useState<EditableRow[]>([]);
   const [realized, setRealized] = useState<ParsedRealized[]>([]);
   const [droppedCount, setDroppedCount] = useState(0);
@@ -45,11 +46,28 @@ function UploadPage() {
   );
 
   async function onParse() {
-    if (!file) { toast.error("Choose a file first."); return; }
+    if (files.length === 0) { toast.error("Choose a file first."); return; }
     setParsing(true);
     try {
-      const raw = await readFileRows(file);
-      const parsed = source === "revolut" ? parseRevolut(raw) : parseCryptoCom(raw);
+      const raw = await readStatements(files);
+      const extraNotes: string[] = [];
+      let parsed;
+      if (source === "revolut") {
+        parsed = parseRevolut(raw);
+      } else {
+        // Rows valued in USD are converted to EUR at the rate of their own date.
+        const usdDates = raw
+          .filter((r) => String(r["Native Currency"]) === "USD" && r["Timestamp (UTC)"])
+          .map((r) => String(r["Timestamp (UTC)"]));
+        const fx = await loadUsdEurRates(usdDates);
+        if (fx.approximate) {
+          extraNotes.push(
+            "Historical USD/EUR rates could not be loaded: amounts in USD were converted at a fixed 0.92."
+          );
+        }
+        parsed = parseCryptoCom(raw, fx.lookup);
+      }
+      setNotes([...parsed.notes, ...extraNotes]);
       const dropped = parsed.positions.filter((r) => !(r.quantity > 0)).length;
       const kept = parsed.positions
         .filter((r) => r.quantity > 0)
@@ -151,11 +169,15 @@ function UploadPage() {
 
       <div className="grid gap-4 rounded-xl border border-border bg-card p-6 sm:grid-cols-[1fr_220px_auto]">
         <div className="space-y-1.5">
-          <Label htmlFor="file">File (.csv or .xlsx)</Label>
+          <Label htmlFor="file">Statements (.csv or .xlsx)</Label>
           <Input
-            id="file" type="file" accept=".csv,.xlsx,.xls"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            id="file" type="file" accept=".csv,.xlsx,.xls" multiple
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
           />
+          <p className="text-xs text-muted-foreground">
+            Select every statement of the platform at once, from the first one. A statement read
+            alone starts from zero and gets quantities and costs wrong.
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label>Source</Label>
@@ -168,11 +190,17 @@ function UploadPage() {
           </Select>
         </div>
         <div className="flex items-end">
-          <Button onClick={onParse} disabled={parsing || !file} className="w-full sm:w-auto">
+          <Button onClick={onParse} disabled={parsing || files.length === 0} className="w-full sm:w-auto">
             {parsing ? "Parsing…" : "Parse & preview"}
           </Button>
         </div>
       </div>
+
+      {notes.map((n) => (
+        <div key={n} className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
+          {n}
+        </div>
+      ))}
 
       {droppedCount > 0 && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">

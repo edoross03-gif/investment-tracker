@@ -25,6 +25,7 @@ type Position = {
   avg_buy_price: number;
   native_currency: string | null;
   manual_price: boolean | null;
+  created_at: string;
 };
 
 type RealizedKind = "sale" | "dividend" | "coupon" | "transfer";
@@ -35,7 +36,27 @@ type RealizedRow = {
   platform: string | null;
   kind: RealizedKind | string | null;
   realized_eur: number;
+  updated_at: string;
 };
+
+// An upload is a full snapshot of one platform and replaces the previous one. Older snapshots can
+// survive in the database (uploads made under different sign-ins could not delete each other's
+// rows), and counting them would double every total. Keep only the newest upload of each platform.
+function latestUpload<T extends { platform: string | null }>(
+  rows: T[],
+  stamp: (r: T) => string,
+): { kept: T[]; hidden: number } {
+  const newest: Record<string, number> = {};
+  for (const r of rows) {
+    const k = r.platform ?? "";
+    const t = new Date(stamp(r)).getTime();
+    if (!(k in newest) || t > newest[k]) newest[k] = t;
+  }
+  const kept = rows.filter(
+    (r) => newest[r.platform ?? ""] - new Date(stamp(r)).getTime() < 60_000,
+  );
+  return { kept, hidden: rows.length - kept.length };
+}
 
 type PriceInfo = {
   price_native?: number;
@@ -66,6 +87,7 @@ function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hiddenOld, setHiddenOld] = useState(0);
 
   const fetchPrices = useCallback(async (pos: Position[]) => {
     if (pos.length === 0) {
@@ -102,20 +124,23 @@ function DashboardPage() {
         const [posRes, rzRes] = await Promise.all([
           supabase
             .from("positions")
-            .select("id, ticker, name, platform, asset_type, quantity, avg_buy_price, native_currency, manual_price")
+            .select("id, ticker, name, platform, asset_type, quantity, avg_buy_price, native_currency, manual_price, created_at")
             .order("platform", { ascending: true })
             .order("ticker", { ascending: true }),
           supabase
             .from("realized_pnl")
-            .select("id, ticker, platform, kind, realized_eur")
+            .select("id, ticker, platform, kind, realized_eur, updated_at")
             .order("platform", { ascending: true })
             .order("ticker", { ascending: true }),
         ]);
         if (posRes.error) throw posRes.error;
         if (rzRes.error) throw rzRes.error;
-        const pos = (posRes.data ?? []) as Position[];
+        const posLatest = latestUpload((posRes.data ?? []) as Position[], (r) => r.created_at);
+        const rzLatest = latestUpload((rzRes.data ?? []) as RealizedRow[], (r) => r.updated_at);
+        const pos = posLatest.kept;
         setPositions(pos);
-        setRealized((rzRes.data ?? []) as RealizedRow[]);
+        setRealized(rzLatest.kept);
+        setHiddenOld(posLatest.hidden + rzLatest.hidden);
         await fetchPrices(pos);
       } catch (e) {
         setError((e as Error).message);
@@ -182,6 +207,9 @@ function DashboardPage() {
                   <> · EUR/USD {pricesData.eurusd.toFixed(4)}</>
                 )}
               </>
+            )}
+            {hiddenOld > 0 && (
+              <> · latest upload per platform ({hiddenOld} rows from older uploads hidden)</>
             )}
           </p>
         </div>

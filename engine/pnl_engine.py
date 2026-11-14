@@ -34,9 +34,9 @@ COL_MAP = {
     "quantita":       ["Quote (Qty)", "Quantità", "Quantita", "Qty", "Shares"],
     "prezzo_carico":  ["PMC ", "PMC", "Prezzo Carico", "Prezzo medio carico", "Avg Cost"],
     "prezzo_attuale": ["Prezzo Attuale", "Prezzo Attuale $", "Prezzo", "Last Price", "Prezzo Corrente"],
-    "valuta":         ["Valuta", "Currency", "CCY"],
+    "valuta":         ["Valuta", "Ccy", "Currency", "CCY"],
     "settore":        ["Settore", "Sector"],
-    "controvalore":   ["Controvalore", "Market Value", "Valore"],
+    "controvalore":   ["Valore Totale", "Controvalore", "Market Value", "Valore"],
 }
 
 # Fogli portfolio — chiave = nome sheet, valore = label display
@@ -140,6 +140,11 @@ def fmt_eur(v: float) -> str:
 def fmt_pct(v: float) -> str:
     sign = "+" if v >= 0 else ""
     return f"{sign}{v:.2f}%"
+
+
+def fmt_px(v: float) -> str:
+    """Prezzo unitario: 2 decimali, ma abbastanza cifre per i token che valgono frazioni di centesimo."""
+    return f"{v:.2f}" if abs(v) >= 0.01 or v == 0 else f"{v:.3g}"
 
 
 def color(v: float, text: str) -> str:
@@ -288,6 +293,21 @@ def compute_pnl(df: pd.DataFrame, label: str, use_live: bool = True) -> pd.DataF
     result["prezzo_carico"]  = pd.to_numeric(df[pc_col], errors="coerce").fillna(0)
     result["prezzo_attuale"] = pd.to_numeric(df[pa_col], errors="coerce").fillna(0)
 
+    # Controllo di coerenza sul prezzo del file: se Qty × Prezzo non torna con il "Valore Totale"
+    # del foglio (es. controvalore scritto a mano nella cella del prezzo), il prezzo unitario
+    # viene ricavato dal totale. Senza questo controllo una sola riga sbagliata falsa tutto il portfolio.
+    cv_col = resolve_col(df, "controvalore")
+    if cv_col:
+        sheet_total = pd.to_numeric(df[cv_col], errors="coerce")
+        implied = result["quantita"] * result["prezzo_attuale"]
+        bad = (sheet_total.notna() & (sheet_total > 0) & (result["quantita"] > 0)
+               & ((implied - sheet_total).abs() > 0.05 * sheet_total))
+        for idx in result.index[bad]:
+            fixed = float(sheet_total[idx]) / float(result.at[idx, "quantita"])
+            print(f"  [warn] {result.at[idx, 'ticker']} — prezzo nel file ({result.at[idx, 'prezzo_attuale']:g}) "
+                  f"incoerente con il Valore Totale ({sheet_total[idx]:g}): uso {fixed:g}")
+            result.at[idx, "prezzo_attuale"] = fixed
+
     # Aggiornamento prezzi live + valuta da yfinance
     if use_live:
         print(f"  Aggiornamento prezzi live per {label}...")
@@ -392,10 +412,14 @@ def compute_twr_from_history(ticker: str, qty: float, avg_cost: float,
     Con un solo prezzo di carico (senza data acquisto precisa), approssimiamo
     usando la serie storica e normalizzando al prezzo di carico.
     """
+    empty = {"ticker": ticker, "twr_1m": None, "twr_3m": None, "twr_6m": None, "twr_ytd": None,
+             "twr_1y": None, "pnl_abs_eur": None, "pnl_pct": None}
     try:
-        hist = yf.Ticker(ticker).history(period=f"{periods}d", auto_adjust=True)
+        # yfinance vuole il simbolo nel suo formato (AMD, DHL.DE, BTC-USD), non quello del foglio
+        # 2 anni di storico: "252d" copriva un anno solo per le azioni; le crypto quotano 365 giorni l'anno
+        hist = yf.Ticker(clean_ticker_for_yfinance(ticker)).history(period="2y", auto_adjust=True)
         if hist.empty or len(hist) < 2:
-            return {"twr_ytd": None, "twr_1m": None, "twr_3m": None, "error": "no data"}
+            return {**empty, "error": "no data"}
 
         closes = hist["Close"].dropna()
         fx = get_fx_rate(valuta)
@@ -430,8 +454,7 @@ def compute_twr_from_history(ticker: str, qty: float, avg_cost: float,
             "error":     None,
         }
     except Exception as e:
-        return {"ticker": ticker, "error": str(e),
-                "twr_ytd": None, "twr_1m": None, "twr_3m": None}
+        return {**empty, "error": str(e)}
 
 
 def compute_portfolio_twr(pnl_df: pd.DataFrame, label: str) -> pd.DataFrame:
@@ -490,7 +513,7 @@ def print_pnl_table(pnl_df: pd.DataFrame, label: str):
     print(f"\n{'═'*90}")
     print(f"  PORTFOLIO {label.upper()}  —  P&L Snapshot  ({datetime.now().strftime('%d/%m/%Y %H:%M')})")
     print(f"{'═'*90}")
-    print(f"  {'TICKER':<10} {'NOME':<22} {'QTY':>7} {'P.CARICO':>10} "
+    print(f"  {'TICKER':<16} {'NOME':<22} {'QTY':>10} {'P.CARICO':>10} "
           f"{'P.ATT.':>10} {'VAL.EUR':>12} {'P&L EUR':>12} {'P&L %':>8} {'PESO':>6}")
     print(f"  {sep}")
 
@@ -498,11 +521,11 @@ def print_pnl_table(pnl_df: pd.DataFrame, label: str):
         pnl_str  = fmt_eur(row["pnl_eur"])
         pct_str  = fmt_pct(row["pnl_pct"])
         print(
-            f"  {row['ticker']:<10} "
+            f"  {row['ticker']:<16} "
             f"{str(row['nome'])[:22]:<22} "
-            f"{row['quantita']:>7.2f} "
-            f"{row['prezzo_carico']:>10.2f} "
-            f"{row['prezzo_attuale']:>10.2f} "
+            f"{row['quantita']:>10.4g} "
+            f"{fmt_px(row['prezzo_carico']):>10} "
+            f"{fmt_px(row['prezzo_attuale']):>10} "
             f"€{row['valore_attuale_eur']:>11,.0f} "
             f"{color(row['pnl_eur'], f'{pnl_str:>12}')} "
             f"{color(row['pnl_pct'], f'{pct_str:>8}')} "
@@ -516,7 +539,7 @@ def print_pnl_table(pnl_df: pd.DataFrame, label: str):
     total_pct  = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
     tot_pnl_str = fmt_eur(total_pnl)
     tot_pct_str = fmt_pct(total_pct)
-    print(f"  {'TOTALE':<44} €{total_val:>11,.0f} "
+    print(f"  {'TOTALE':<72} €{total_val:>11,.0f} "
           f"{color(total_pnl, f'{tot_pnl_str:>12}')} "
           f"{color(total_pct, f'{tot_pct_str:>8}')}")
     print()
@@ -561,8 +584,8 @@ def print_twr_table(twr_df: pd.DataFrame, summary: dict, label: str):
     for _, row in twr_df.sort_values("valore_eur", ascending=False).iterrows():
         def tw(k):
             v = row.get(k)
-            if v is None:
-                return "   N/D"
+            if v is None or pd.isna(v):
+                return "     N/D"
             return color(v, f"{fmt_pct(v):>8}")
 
         pnl_abs = row.get("pnl_abs_eur") or 0
@@ -585,7 +608,7 @@ def print_twr_table(twr_df: pd.DataFrame, summary: dict, label: str):
     print(f"  {'PORTFOLIO (wmean)':<12}", end="")
     for period in ["twr_1m", "twr_3m", "twr_6m", "twr_ytd", "twr_1y"]:
         v = summary.get(period)
-        s = "   N/D" if v is None else color(v, f"{fmt_pct(v):>8}")
+        s = "     N/D" if v is None or pd.isna(v) else color(v, f"{fmt_pct(v):>8}")
         print(f" {s}", end="")
     print()
 
