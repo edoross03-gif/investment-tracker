@@ -1,0 +1,2 @@
+# Copy to config.toml (not in git) and set your Supabase project ref.
+project_id = "your-project-ref"

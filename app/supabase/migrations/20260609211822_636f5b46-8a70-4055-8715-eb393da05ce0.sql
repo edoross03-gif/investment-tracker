@@ -1,0 +1,1 @@
+ALTER TABLE public.realized_pnl ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'sale';

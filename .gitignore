@@ -1,0 +1,36 @@
+# Personal data: the real tracker and broker statements never go in git
+data/*
+!data/.gitkeep
+*.xlsx
+*.xls
+*.csv
+
+# Secrets
+.env
+.env.*
+!.env.example
+_secrets/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (app/)
+node_modules/
+dist/
+.output/
+.vinxi/
+.nitro/
+.tanstack/
+.wrangler/
+
+# Archive + OS noise
+_archive/
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Local only: names the real Supabase project
+app/supabase/config.toml
